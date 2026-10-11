@@ -1,0 +1,51 @@
+import paho.mqtt.client as mqtt
+import json
+from influxdb_client import InfluxDBClient, Point
+from influxdb_client.client.write_api import SYNCHRONOUS
+
+# ================= 1. CẤU HÌNH INFLUXDB =================
+# Dán chuỗi API Token siêu dài bạn vừa copy trên web vào giữa 2 dấu ngoặc kép dưới đây
+INFLUX_TOKEN = "T_1H20sPDLc7lPjWFoyLYgQRN_gNvMefLqnqBZnO9MWdRjJlRNyAPfsXmvuQ7bj4lSPRPbUuqrg62GJKKWeDkw=="
+INFLUX_ORG = "PTIT"
+INFLUX_BUCKET = "sensor_data"
+INFLUX_URL = "http://localhost:8086"
+
+# Khởi tạo kết nối tới database InfluxDB
+influx_client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
+write_api = influx_client.write_api(write_options=SYNCHRONOUS)
+
+
+# ================= 2. XỬ LÝ DỮ LIỆU TỪ HIVEMQ =================
+def on_message(client, userdata, msg):
+    try:
+        # Giải mã gói tin JSON nhận được từ ESP32 Wokwi
+        payload = json.loads(msg.payload.decode())
+        print(f"Nhận được: {payload}")
+
+        # Đóng gói dữ liệu (nhiệt độ, độ ẩm, khoảng cách) theo chuẩn của InfluxDB
+        point = Point("environment") \
+            .tag("device", "ESP32_Wokwi") \
+            .field("temperature", float(payload["temperature"])) \
+            .field("humidity", float(payload["humidity"])) \
+            .field("distance_cm", float(payload["distance_cm"]))
+
+        # Ghi thẳng vào cơ sở dữ liệu
+        write_api.write(bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=point)
+        print("-> Đã lưu vào InfluxDB thành công!\n")
+
+    except Exception as e:
+        print("Lỗi khi xử lý dữ liệu:", e)
+
+
+# ================= 3. KẾT NỐI HIVEMQ PUBLIC =================
+mqtt_client = mqtt.Client()
+mqtt_client.on_message = on_message
+
+print("Đang kết nối tới HiveMQ...")
+mqtt_client.connect("broker.hivemq.com", 1883, 60)
+
+# Theo dõi đúng Topic chứa mã sinh viên của bạn
+mqtt_client.subscribe("ptit/iot/lab2/B23DCCN852/sensors")
+
+print("Đang chờ dữ liệu từ Wokwi...")
+mqtt_client.loop_forever()
